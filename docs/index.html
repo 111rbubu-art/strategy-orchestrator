@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>センチメント・デスク（プレビュー）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0a0c10; --panel:#11151c; --panel2:#151b24; --line:#222b38;
+  --text:#e7edf4; --dim:#8492a3; --bull:#2ec27e; --bear:#f2615a;
+  --neutral:#8492a3; --gold:#d9a441;
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  background-image:radial-gradient(1200px 600px at 80% -10%,#141b27 0,transparent 60%),
+    radial-gradient(900px 500px at -10% 110%,#11161f 0,transparent 55%);}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 22px 60px}
+header{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:26px}
+h1{font-family:'Fraunces',serif;font-weight:500;font-size:34px;letter-spacing:.3px;margin:0;font-style:italic}
+h1 .dot{color:var(--gold)}
+.meta{font-size:12.5px;color:var(--dim);text-align:right;line-height:1.7}
+.meta b{color:var(--text);font-weight:600}
+.controls{display:flex;gap:10px;align-items:center;margin-top:8px}
+.controls input{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+  font-family:inherit;padding:6px 10px;width:84px;border-radius:7px;font-size:13px}
+.controls button{background:var(--gold);border:0;color:#1a1206;font-family:inherit;
+  font-weight:600;padding:6px 14px;border-radius:7px;cursor:pointer;font-size:13px}
+.pill{font-size:10.5px;letter-spacing:.12em;color:#1a1206;background:var(--gold);
+  padding:2px 8px;border-radius:999px;font-weight:600;vertical-align:middle;margin-left:10px}
+.section-label{font-size:11px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;margin:0 0 12px}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:36px}
+.card{background:linear-gradient(180deg,var(--panel) 0,var(--panel2) 100%);
+  border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px;position:relative;overflow:hidden;
+  opacity:0;transform:translateY(10px);animation:rise .5s ease forwards}
+.card:nth-child(2){animation-delay:.07s}.card:nth-child(3){animation-delay:.14s}
+@keyframes rise{to{opacity:1;transform:none}}
+.card .win{font-size:12px;color:var(--dim);letter-spacing:.1em}
+.card .val{font-family:'Fraunces',serif;font-style:italic;font-size:31px;line-height:1.1;
+  margin:6px 0 2px;font-weight:500;white-space:nowrap}
+/* 方向つき段階メーター（中央=中立、右=強気緑 / 左=弱気赤）*/
+.meter{display:flex;align-items:center;gap:5px;margin:15px 0 14px}
+.seg{flex:1;height:9px;border-radius:3px;background:#1d2531;transition:background .35s}
+.seg.bull{background:var(--bull)} .seg.bear{background:var(--bear)}
+.mid{flex:0 0 auto;width:2px;height:18px;background:#3a4757;border-radius:2px}
+.kv{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);margin-top:7px}
+.kv b{color:var(--text);font-weight:600}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 8px;
+  opacity:0;animation:rise .5s ease .2s forwards}
+.src{font-size:11px;color:var(--dim);margin:10px 2px 0}
+@media(max-width:760px){.cards{grid-template-columns:1fr}h1{font-size:27px}}
+</style></head>
+<body><div class="wrap">
+<header>
+  <div>
+    <h1>Sentiment Desk<span class="dot">.</span><span class="pill" id="mode">PREVIEW</span></h1>
+    <div class="controls">
+      <input id="asset" value="BTC" spellcheck="false">
+      <button onclick="refresh()">更新</button>
+    </div>
+  </div>
+  <div class="meta">
+    <div>銘柄 <b id="m-asset">—</b> ・ 更新 <b id="m-upd">—</b></div>
+    <div>収集 <b id="m-news">0</b> 件 / 採点 <b id="m-scored">0</b> 件</div>
+  </div>
+</header>
+
+<p class="section-label">現在の集計シグナル</p>
+<div class="cards" id="cards"></div>
+
+<p class="section-label">センチメント推移 × 価格</p>
+<div class="chartbox"><canvas id="chart" height="118"></canvas>
+  <div class="src" id="src"></div></div>
+</div>
+
+<script>
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const BULL=css('--bull'),BEAR=css('--bear'),NEU=css('--neutral'),GOLD=css('--gold'),DIM=css('--dim');
+let chart;
+
+/* イベント種別 → 日本語ラベル */
+const EV={
+  regulation:'規制', etf_or_fund_flow:'ETF・資金流入', hack_or_exploit:'ハッキング・流出',
+  listing_or_delisting:'上場・廃止', partnership_or_adoption:'提携・採用',
+  macro_or_rates:'マクロ・金利', whale_or_onchain:'大口・オンチェーン',
+  tech_or_upgrade:'技術・更新', legal_or_lawsuit:'訴訟・法的',
+  price_move_recap:'値動き解説', opinion_or_analysis:'分析・意見', other:'その他', '—':'—'
+};
+const evLabel=c=>EV[c]||c;
+
+/* スコア(-1..1) → 段階レベル(-3..+3)・言葉・色（すべて level 起点で一貫）*/
+function level(v){ return Math.max(-3, Math.min(3, Math.round(v/0.2))); }
+function strengthWord(v){
+  const L=level(v); if(L===0) return '中立';
+  const dir = v>0 ? '強気' : '弱気';
+  const a=Math.abs(L);
+  return (a===1?'やや':a===3?'非常に':'')+dir;
+}
+function col(v){ const L=level(v); return L>0?BULL : L<0?BEAR : NEU; }
+function fmt(v){ return (v>0?'+':'')+v.toFixed(2); }
+
+function meterCells(v){
+  const L=level(v); let html='';
+  for(let i=-3;i<=3;i++){
+    if(i===0){ html+='<span class="mid"></span>'; continue; }
+    let cls='seg';
+    if(i>0 && L>=i) cls+=' bull';
+    if(i<0 && L<=i) cls+=' bear';
+    html+=`<span class="${cls}"></span>`;
+  }
+  return html;
+}
+
+/* ---- サンプルデータ（サーバー/データが無いときのプレビュー用）---- */
+function sampleSignal(asset){
+  return {asset:asset||'BTC', updated:new Date().toISOString().slice(0,19)+' UTC',
+    totals:{news:1284, scored:1251},
+    windows:[
+      {w:3, count:7,  mean:0.45, wmean:0.42, pos:5, neg:1, top_event:'etf_or_fund_flow'},
+      {w:6, count:14, mean:0.21, wmean:0.18, pos:8, neg:4, top_event:'regulation'},
+      {w:24,count:53, mean:-0.04,wmean:-0.06,pos:19,neg:22,top_event:'macro_or_rates'},
+    ]};
+}
+function sampleSeries(window){
+  const t=[],price=[],sent=[],count=[]; let p=62200, s=0.05;
+  const start=Date.now()-48*3600*1000;
+  for(let i=0;i<48;i++){
+    const d=new Date(start+i*3600*1000);
+    p*= (1+(Math.sin(i/5)*0.004)+(Math.random()-0.5)*0.006);
+    s = Math.max(-0.7, Math.min(0.7, s*0.7 + Math.sin(i/6)*0.18 + (Math.random()-0.5)*0.12));
+    t.push(d.toISOString()); price.push(Math.round(p)); sent.push(+s.toFixed(3));
+    count.push(Math.max(0,Math.round(4+Math.sin(i/4)*3+(Math.random()-0.5)*3)));
+  }
+  return {source:'sample', window, t, price, sentiment:sent, count};
+}
+
+function renderCards(d){
+  document.getElementById('m-asset').textContent=d.asset;
+  document.getElementById('m-upd').textContent=(d.updated||'').replace('T',' ').replace('+00:00',' UTC');
+  document.getElementById('m-news').textContent=d.totals.news;
+  document.getElementById('m-scored').textContent=d.totals.scored;
+  const box=document.getElementById('cards'); box.innerHTML='';
+  d.windows.forEach(w=>{
+    const c=col(w.wmean);
+    const el=document.createElement('div'); el.className='card';
+    el.innerHTML=`
+      <div class="win">直近 ${w.w}h</div>
+      <div class="val" style="color:${c}">${strengthWord(w.wmean)}</div>
+      <div class="meter">${meterCells(w.wmean)}</div>
+      <div class="kv"><span>強気 / 弱気の本数</span><b><span style="color:${BULL}">${w.pos}</span> / <span style="color:${BEAR}">${w.neg}</span></b></div>
+      <div class="kv"><span>主な材料</span><b>${evLabel(w.top_event)}</b></div>
+      <div class="kv"><span>件数 ・ スコア</span><b>${w.count} ・ ${fmt(w.wmean)}</b></div>`;
+    box.appendChild(el);
+  });
+}
+
+function renderChart(d){
+  const labelMap={features:'price: features.csv', sample:'サンプルデータ（プレビュー）', db:'価格データなし'};
+  document.getElementById('src').textContent=(labelMap[d.source]||d.source)+` ／ sentiment: sent_mean_${d.window}h`;
+  const labels=d.t.map(x=>x.replace('T',' ').slice(5,16));
+  const hasPrice=d.price.some(v=>v!==null);
+  const ds=[{label:`市場心理 ${d.window}h`,data:d.sentiment,yAxisID:'y1',
+      borderColor:GOLD,backgroundColor:GOLD,borderWidth:1.6,pointRadius:0,tension:.25}];
+  if(hasPrice) ds.unshift({label:'price',data:d.price,yAxisID:'y',
+      borderColor:'#5b6b7d',borderWidth:1.6,pointRadius:0,tension:.15});
+  const opts={responsive:true,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{color:DIM,font:{family:'IBM Plex Mono'}}}},
+    scales:{
+      x:{ticks:{color:DIM,maxTicksLimit:8,font:{family:'IBM Plex Mono',size:10}},grid:{color:'#1a2230'}},
+      y:{position:'left',display:hasPrice,ticks:{color:'#6f7e8f',font:{family:'IBM Plex Mono',size:10}},grid:{color:'#161d29'}},
+      y1:{position:'right',min:-1,max:1,ticks:{color:GOLD,font:{family:'IBM Plex Mono',size:10}},grid:{drawOnChartArea:false}}
+    }};
+  if(chart){chart.data={labels,datasets:ds};chart.options=opts;chart.update();}
+  else chart=new Chart(document.getElementById('chart'),{type:'line',data:{labels,datasets:ds},options:opts});
+}
+
+async function tryFetch(url){
+  const ctrl=new AbortController(); const id=setTimeout(()=>ctrl.abort(),800);
+  try{ const r=await fetch(url,{signal:ctrl.signal}); clearTimeout(id);
+       if(!r.ok) throw 0; return await r.json(); }
+  catch(e){ clearTimeout(id); return null; }
+}
+
+async function refresh(){
+  const a=document.getElementById('asset').value.trim()||'BTC';
+  let sig=null, ts=null, mode='PREVIEW';
+  // ① 静的スナップショット（GitHub Pages 用 / 同一オリジンの data.json）
+  const snap=await tryFetch('./data.json');
+  if(snap && snap.signal && snap.timeseries){ sig=snap.signal; ts=snap.timeseries; mode='SNAPSHOT'; }
+  // ② ライブAPI（dashboard.py が配信しているとき）
+  if(!sig){
+    const s=await tryFetch('/api/signal?asset='+encodeURIComponent(a));
+    const t=await tryFetch('/api/timeseries?window=6&limit=240&asset='+encodeURIComponent(a));
+    if(s && t){ sig=s; ts=t; mode='LIVE'; }
+  }
+  // ③ サンプル（データが無いときのプレビュー）
+  if(!sig){ sig=sampleSignal(a); ts=sampleSeries(6); }
+  document.getElementById('mode').textContent=mode;
+  renderCards(sig); renderChart(ts);
+}
+refresh(); setInterval(refresh,30000);
+</script>
+</body></html>
