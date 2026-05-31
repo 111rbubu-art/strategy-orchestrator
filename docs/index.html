@@ -50,6 +50,10 @@ h1 .dot{color:var(--gold)}
 .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 8px;
   opacity:0;animation:rise .5s ease .2s forwards}
 .src{font-size:11px;color:var(--dim);margin:10px 2px 0}
+.pstats{display:flex;gap:24px;flex-wrap:wrap;margin:2px 2px 16px}
+.pstat{font-size:12px;color:var(--dim);letter-spacing:.04em}
+.pstat b{display:block;font-family:'Fraunces',serif;font-style:italic;font-size:22px;
+  color:var(--text);font-weight:500;margin-top:3px}
 @media(max-width:760px){.cards{grid-template-columns:1fr}h1{font-size:27px}}
 </style></head>
 <body><div class="wrap">
@@ -73,12 +77,20 @@ h1 .dot{color:var(--gold)}
 <p class="section-label">センチメント推移 × 価格</p>
 <div class="chartbox"><canvas id="chart" height="118"></canvas>
   <div class="src" id="src"></div></div>
+
+<p class="section-label">ペーパー成績（フォワード検証）</p>
+<div class="chartbox">
+  <div class="pstats" id="paper-stats"></div>
+  <canvas id="pchart" height="118"></canvas>
+  <div class="src" id="psrc"></div>
+  <div class="src" id="paper-empty" style="display:none"></div>
+</div>
 </div>
 
 <script>
 const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const BULL=css('--bull'),BEAR=css('--bear'),NEU=css('--neutral'),GOLD=css('--gold'),DIM=css('--dim');
-let chart;
+let chart, pchart;
 
 /* イベント種別 → 日本語ラベル */
 const EV={
@@ -176,6 +188,61 @@ function renderChart(d){
   else chart=new Chart(document.getElementById('chart'),{type:'line',data:{labels,datasets:ds},options:opts});
 }
 
+/* ---- ペーパー成績（フォワード検証）---- */
+function samplePaper(){
+  const t=[],eq=[],price=[]; let e=10000,p=62000;
+  const start=Date.now()-72*3600*1000;
+  for(let i=0;i<72;i++){const d=new Date(start+i*3600*1000);
+    p*=(1+Math.sin(i/7)*0.004+(Math.random()-0.5)*0.005);
+    e*=(1+Math.sin(i/8)*0.002+(Math.random()-0.5)*0.003+0.0006);
+    t.push(d.toISOString()); eq.push(Math.round(e)); price.push(Math.round(p));}
+  const last=eq[eq.length-1];
+  return {t,equity:eq,price,position:eq.map(()=>0),realized:[],
+    start_equity:10000,last_equity:last,
+    ret_pct:+(((last/10000)-1)*100).toFixed(2),
+    realized_pnl:+(last-10000).toFixed(2),position_qty:0,trades:18};
+}
+
+function renderPaper(p){
+  const box=document.getElementById('paper-stats');
+  const empty=document.getElementById('paper-empty');
+  const canvas=document.getElementById('pchart');
+  if(!p || !p.t || p.t.length===0){
+    box.innerHTML=''; canvas.style.display='none';
+    document.getElementById('psrc').textContent='';
+    empty.style.display='block';
+    empty.textContent='まだ取引記録がありません。採点(API)を有効にすると、シグナルに応じた仮想売買が記録され、ここに資産曲線が出ます。';
+    if(pchart){pchart.destroy();pchart=null;}
+    return;
+  }
+  empty.style.display='none'; canvas.style.display='';
+  const ret=(p.ret_pct==null)?'—':((p.ret_pct>0?'+':'')+p.ret_pct+'%');
+  const retc=p.ret_pct>0?BULL:p.ret_pct<0?BEAR:DIM;
+  const rl=p.realized_pnl;
+  box.innerHTML=`
+    <div class="pstat">評価額<b>${p.last_equity!=null?p.last_equity.toLocaleString():'—'}</b></div>
+    <div class="pstat">リターン<b style="color:${retc}">${ret}</b></div>
+    <div class="pstat">実現損益<b>${rl!=null?((rl>0?'+':'')+rl.toLocaleString()):'—'}</b></div>
+    <div class="pstat">現在建玉<b>${p.position_qty!=null?p.position_qty:'—'}</b></div>
+    <div class="pstat">取引数<b>${p.trades}</b></div>`;
+  document.getElementById('psrc').textContent='評価額（クォート建て） × price';
+  const labels=p.t.map(x=>x.replace('T',' ').slice(5,16));
+  const hasPrice=p.price.some(v=>v!==null);
+  const ds=[{label:'評価額',data:p.equity,yAxisID:'y',borderColor:BULL,
+      backgroundColor:'rgba(46,194,126,.08)',borderWidth:1.8,pointRadius:0,tension:.2,fill:true}];
+  if(hasPrice) ds.push({label:'price',data:p.price,yAxisID:'y1',
+      borderColor:'#5b6b7d',borderWidth:1.4,pointRadius:0,tension:.15});
+  const opts={responsive:true,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{color:DIM,font:{family:'IBM Plex Mono'}}}},
+    scales:{
+      x:{ticks:{color:DIM,maxTicksLimit:8,font:{family:'IBM Plex Mono',size:10}},grid:{color:'#1a2230'}},
+      y:{position:'left',ticks:{color:BULL,font:{family:'IBM Plex Mono',size:10}},grid:{color:'#161d29'}},
+      y1:{position:'right',display:hasPrice,ticks:{color:'#6f7e8f',font:{family:'IBM Plex Mono',size:10}},grid:{drawOnChartArea:false}}
+    }};
+  if(pchart){pchart.data={labels,datasets:ds};pchart.options=opts;pchart.update();}
+  else pchart=new Chart(document.getElementById('pchart'),{type:'line',data:{labels,datasets:ds},options:opts});
+}
+
 async function tryFetch(url){
   const ctrl=new AbortController(); const id=setTimeout(()=>ctrl.abort(),800);
   try{ const r=await fetch(url,{signal:ctrl.signal}); clearTimeout(id);
@@ -185,10 +252,10 @@ async function tryFetch(url){
 
 async function refresh(){
   const a=document.getElementById('asset').value.trim()||'BTC';
-  let sig=null, ts=null, mode='PREVIEW';
+  let sig=null, ts=null, paper=null, mode='PREVIEW';
   // ① 静的スナップショット（GitHub Pages 用 / 同一オリジンの data.json）
   const snap=await tryFetch('./data.json');
-  if(snap && snap.signal && snap.timeseries){ sig=snap.signal; ts=snap.timeseries; mode='SNAPSHOT'; }
+  if(snap && snap.signal && snap.timeseries){ sig=snap.signal; ts=snap.timeseries; paper=snap.paper||null; mode='SNAPSHOT'; }
   // ② ライブAPI（dashboard.py が配信しているとき）
   if(!sig){
     const s=await tryFetch('/api/signal?asset='+encodeURIComponent(a));
@@ -196,9 +263,9 @@ async function refresh(){
     if(s && t){ sig=s; ts=t; mode='LIVE'; }
   }
   // ③ サンプル（データが無いときのプレビュー）
-  if(!sig){ sig=sampleSignal(a); ts=sampleSeries(6); }
+  if(!sig){ sig=sampleSignal(a); ts=sampleSeries(6); paper=samplePaper(); }
   document.getElementById('mode').textContent=mode;
-  renderCards(sig); renderChart(ts);
+  renderCards(sig); renderChart(ts); renderPaper(paper);
 }
 refresh(); setInterval(refresh,30000);
 </script>
