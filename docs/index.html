@@ -267,7 +267,7 @@ async function refresh(){
   const a=document.getElementById('asset').value.trim()||'BTC';
   let sig=null, ts=null, paper=null, mode='PREVIEW';
   // ① 静的スナップショット（GitHub Pages 用 / 同一オリジンの data.json）
-  const snap=await tryFetch('./data.json');
+  const snap=await tryFetch('./data.json?t='+Date.now());
   if(snap && snap.signal && snap.timeseries){ sig=snap.signal; ts=snap.timeseries; paper=snap.paper||null; mode='SNAPSHOT'; }
   // ② ライブAPI（dashboard.py が配信しているとき）
   if(!sig){
