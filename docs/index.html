@@ -85,6 +85,19 @@ h1 .dot{color:var(--gold)}
   <div class="src" id="psrc"></div>
   <div class="src" id="paper-empty" style="display:none"></div>
 </div>
+
+<p class="section-label">取引コントロール</p>
+<div class="chartbox">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;justify-content:space-between">
+    <div>状態: <b id="ctl-state" style="font-size:1.1em">—</b> <span class="src" id="ctl-upd"></span></div>
+    <div style="display:flex;gap:8px">
+      <button id="ctl-run" onclick="setControl('running')">稼働</button>
+      <button id="ctl-pause" onclick="setControl('paused')">一時停止</button>
+      <button id="ctl-flat" onclick="setControl('flat')" style="border-color:var(--bear)">全手仕舞い</button>
+    </div>
+  </div>
+  <div class="src" id="ctl-note" style="margin-top:8px"></div>
+</div>
 </div>
 
 <script>
@@ -266,6 +279,42 @@ async function refresh(){
   if(!sig){ sig=sampleSignal(a); ts=sampleSeries(6); paper=samplePaper(); }
   document.getElementById('mode').textContent=mode;
   renderCards(sig); renderChart(ts); renderPaper(paper);
+  refreshControl();
+}
+
+const CTL_LABEL={running:'稼働中',paused:'一時停止',flat:'停止(手仕舞い)'};
+const CTL_COLOR={running:BULL,paused:GOLD,flat:BEAR};
+let ctlLive=false;
+async function refreshControl(){
+  const c=await tryFetch('/api/control');     // 静的配信ではnull（操作不可）
+  const stEl=document.getElementById('ctl-state');
+  const note=document.getElementById('ctl-note');
+  const btns=['ctl-run','ctl-pause','ctl-flat'].map(id=>document.getElementById(id));
+  if(!c || !c.effective){
+    ctlLive=false;
+    stEl.textContent='—'; stEl.style.color=DIM;
+    document.getElementById('ctl-upd').textContent='';
+    note.textContent='操作にはライブ接続（dashboard.py / 自前バックエンド）が必要です。静的表示では操作できません。';
+    btns.forEach(b=>{b.disabled=true; b.style.opacity=.4; b.style.outline='none';});
+    return;
+  }
+  ctlLive=true;
+  const eff=c.effective;
+  stEl.textContent=CTL_LABEL[eff]||eff; stEl.style.color=CTL_COLOR[eff]||DIM;
+  document.getElementById('ctl-upd').textContent=c.updated?('・更新 '+c.updated):'';
+  note.textContent=c.stop_file?'※STOPファイルがあるため強制「停止(手仕舞い)」中（解除はサーバ側でSTOP削除）。':'';
+  const map={running:'ctl-run',paused:'ctl-pause',flat:'ctl-flat'};
+  btns.forEach(b=>{b.disabled=false; b.style.opacity=1; b.style.outline='none';});
+  const act=document.getElementById(map[c.state]); if(act) act.style.outline='2px solid '+(CTL_COLOR[c.state]||GOLD);
+}
+async function setControl(state){
+  if(!ctlLive) return;
+  if(state==='flat' && !confirm('全建玉を手仕舞いして取引を停止します。よろしいですか？')) return;
+  try{
+    const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:state})});
+    if(!r.ok) throw 0;
+  }catch(e){ alert('操作に失敗しました（接続／権限を確認してください）'); }
+  refreshControl();
 }
 refresh(); setInterval(refresh,30000);
 </script>
